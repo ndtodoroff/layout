@@ -2,8 +2,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 
-int parse_commandline(int argc, char* argv[]) {
+int parse_commandline(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "Expected 1 argument, found %d\n", argc);
         return 1;
@@ -15,8 +16,7 @@ int parse_commandline(int argc, char* argv[]) {
 const unsigned int decode_width = 8, encode_width = 6;
 const size_t decode_step = 3, encode_step = 4;
 
-// POSIX standard says char is 8 bits
-void base64_encode(size_t len, const char *data, char *out) {
+int base64_encode(size_t len, const uint8_t *data, char *out) {
     const static char table[64] = {
       'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
            'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
@@ -31,7 +31,7 @@ void base64_encode(size_t len, const char *data, char *out) {
     uint32_t word;
 
     size_t i = 0, j = 0;
-    for (; i <= len - decode_step; i += decode_step, j += encode_step) {
+    for (; i + decode_step <= len; i += decode_step, j += encode_step) {
         word  = ((uint32_t) data[i])   << 2*decode_width;
         word |= ((uint32_t) data[i+1]) << decode_width;
         word |= ((uint32_t) data[i+2]);
@@ -44,14 +44,25 @@ void base64_encode(size_t len, const char *data, char *out) {
         word >>= encode_width;
         out[j]   = table[word];
     }
+    printf("i = %d, j = %d\n", i, j);
 
     const size_t rem = len - i;
 
-    word = 0;
     switch (rem) {
         case 0:
-            return;
+            break;
         case 1:
+            word  = ((uint32_t) data[i])   << 2*decode_width;
+            word >>= 2*encode_width;
+
+            out[j+3] = pad;
+            out[j+2] = pad;
+            out[j+1] = table[word & mask];
+            word >>= encode_width;
+            out[j]   = table[word];
+
+            break;
+        case 2:
             word  = ((uint32_t) data[i])   << 2*decode_width;
             word |= ((uint32_t) data[i+1]) << decode_width;
             word >>= encode_width;
@@ -64,22 +75,20 @@ void base64_encode(size_t len, const char *data, char *out) {
             out[j]   = table[word];
 
             break;
-        case 2:
-            word  = ((uint32_t) data[i])   << 2*decode_width;
-            word >>= 2*encode_width;
-            fprintf(stderr, "word_enc = 0x%x\n", word);
-
-            out[j+3] = pad;
-            out[j+2] = pad;
-            out[j+1] = table[word & mask];
-            word >>= encode_width;
-            out[j]   = table[word];
-
-            break;
+#ifdef DEBUG
+        default:
+            fprintf(stderr,
+                "base64_encode: IMPOSSIBLE: bad remainder: %d\n",
+                rem
+            );
+            return 1;
+#endif
     }
+
+    return 0;
 }
 
-void base64_decode(size_t len, const char *encode, char *decode) {
+int base64_decode(size_t len, const char *encode, uint8_t *decode) {
     const char pad = '=';
     const size_t bias = '+';
     const size_t max = 'z';
@@ -103,12 +112,28 @@ void base64_decode(size_t len, const char *encode, char *decode) {
     char buf[5];
 #endif
     size_t i = 0, j = 0;
-    for (; i < len-encode_step; i += encode_step, j += decode_step) {
+    for (; i + encode_step < len; i += encode_step, j += decode_step) {
         uint32_t word;
-#if DEBUG
+#ifdef DEBUG
         for (size_t k = 0; k < 4; ++k) {
-            if (encode[i+k] < bias || max < encode[i+k] || table[encode[i+k]-bias] == bad_value)
-                goto encode_error;
+            if (encode[i+k] < bias || max < encode[i+k] ||
+                table[encode[i+k]-bias] == bad_value)
+            {
+#ifdef DEBUG
+                snprintf(buf, 5, encode + i);
+                fprintf(stderr,
+                    "base64_decode: bad encode \"%s\" at index %d\n",
+                    buf, i
+                );
+                for (size_t k = 0; k < 4; ++k)
+                    fprintf(stderr,
+                        "bias = %d, enc = %c %3d, enc-bias = %d, max = %d, val = %d\n",
+                        bias, encode[i+k], encode[i+k], encode[i+k]-bias, max,
+                        table[encode[i+k]-bias]
+                    );
+#endif
+                return 1;
+            }
         }
 #endif
         word  = table[encode[i]  -bias] << 3*encode_width;
@@ -122,21 +147,6 @@ void base64_decode(size_t len, const char *encode, char *decode) {
         word >>= decode_width;
         decode[j]     = word & mask;
 
-#ifdef DEBUG
-        continue;
-encode_error:
-        snprintf(buf, 5, encode + i);
-        fprintf(stderr,
-            "base64_decode: bad encode \"%s\" at index %d\n",
-            buf, i
-        );
-        for (size_t k = 0; k < 4; ++k)
-            fprintf(stderr,
-                "bias = %d, enc = %c %3d, enc-bias = %d, max = %d, val = %d\n",
-                bias, encode[i+k], encode[i+k], encode[i+k]-bias, max,
-                table[encode[i+k]-bias]
-            );
-#endif
     }
 
     uint32_t word;
@@ -167,41 +177,59 @@ encode_error:
 #ifdef DEBUG
         default:
             fprintf(stderr,
-                "base64_decode: bad encode: too much padding: %d\n",
+                "base64_decode: IMPOSSIBLE: too much padding: %d\n",
                 padding
             );
+            return 2;
 #endif
     }
+
+    return 0;
+
 }
 
 size_t encode_len(size_t decode_len) {
-    return ((decode_len-1)/3+1)*4;
+    const size_t mod = decode_len%3;
+    return ((decode_len - mod)/3 + !!mod)*4;
 }
 size_t decode_len(size_t encode_len, const char *encode) {
     const size_t padding =
         (encode[encode_len-1] == '=') + (encode[encode_len-2] == '=');
-    
-    return encode_len/4*3 + padding;
+
+    return encode_len/4*3 - padding;
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char **argv) {
     if (parse_commandline(argc, argv)) {
         return 1;
     }
 
     const size_t len = strlen(argv[1]);
     const size_t out_len = encode_len(len);
-    char *out = calloc(out_len, sizeof(char));
-    base64_encode(strlen(argv[1]), argv[1], out);
+    printf("len = %d, out_len = %d, %%3 = %d, %%4 = %d\n", len, out_len, len%3, out_len%4);
+    char *out = calloc(out_len+1, sizeof(char));
     out[out_len] = '\0';
+    base64_encode(len, argv[1], out);
+    if (out[out_len]) {
+        fputs("out over-written\n", stderr);
+        return 1;
+    }
     puts(out);
     putchar('\n');
 
-    for (size_t i = 0; i < len; ++i) {
-        argv[1][i] = 'Z';
+    if (len != decode_len(out_len, out)) {
+        fprintf(stderr, "Bad decode_len=%d vs. %d\n", decode_len(out_len, out), len);
+        return 1;
     }
+
+    char *x = argv[1];
+    while (*x) *x++ = 'Z';
+
     base64_decode(out_len, out, argv[1]);
-    argv[1][len] = '\0';
+    if (argv[1][len]) {
+        fputs("argv over-written\n", stderr);
+        return 1;
+    }
     puts(argv[1]);
     putchar('\n');
 
