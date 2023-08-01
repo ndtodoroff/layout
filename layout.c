@@ -12,9 +12,8 @@ int parse_commandline(int argc, char* argv[]) {
     return 0;
 }
 
-
-const unsigned int uncode_width = 8, encode_width = 6;
-const size_t uncode_step = 3, encode_step = 4;
+const unsigned int decode_width = 8, encode_width = 6;
+const size_t decode_step = 3, encode_step = 4;
 
 // POSIX standard says char is 8 bits
 void base64_encode(size_t len, const char *data, char *out) {
@@ -32,67 +31,153 @@ void base64_encode(size_t len, const char *data, char *out) {
     uint32_t word;
 
     size_t i = 0, j = 0;
-    for (; i <= len - uncode_step; i += uncode_step, j += encode_step) {
-        word  = ((uint32_t) data[i+2]) << 2*uncode_width;
-        word |= ((uint32_t) data[i+1]) << uncode_width;
-        word |= ((uint32_t) data[i  ]);
+    for (; i <= len - decode_step; i += decode_step, j += encode_step) {
+        word  = ((uint32_t) data[i])   << 2*decode_width;
+        word |= ((uint32_t) data[i+1]) << decode_width;
+        word |= ((uint32_t) data[i+2]);
 
-        out[j] = table[word & mask];
-        word >>= encode_width;
-        out[j+1] = table[word & mask];
+        out[j+3] = table[word & mask];
         word >>= encode_width;
         out[j+2] = table[word & mask];
         word >>= encode_width;
-        out[j+3] = table[word];
+        out[j+1] = table[word & mask];
+        word >>= encode_width;
+        out[j]   = table[word];
     }
 
     const size_t rem = len - i;
 
-    if (rem == 0) return;
-
     word = 0;
-    for (int k = rem - 1; 0 <= k; --k) {
-        word |= ((uint32_t) data[i + k]) << k*uncode_width;
-    }
+    switch (rem) {
+        case 0:
+            return;
+        case 1:
+            word  = ((uint32_t) data[i])   << 2*decode_width;
+            word |= ((uint32_t) data[i+1]) << decode_width;
+            word >>= encode_width;
 
-    size_t k = 0;
-    for (; k < rem+1; ++k) {
-        out[j+k] = table[word & mask];
-        word >>= encode_width;
-    }
-    for (; k < encode_step; ++k) {
-        out[j+k] = pad;
+            out[j+3] = pad;
+            out[j+2] = table[word & mask];
+            word >>= encode_width;
+            out[j+1] = table[word & mask];
+            word >>= encode_width;
+            out[j]   = table[word];
+
+            break;
+        case 2:
+            word  = ((uint32_t) data[i])   << 2*decode_width;
+            word >>= 2*encode_width;
+            fprintf(stderr, "word_enc = 0x%x\n", word);
+
+            out[j+3] = pad;
+            out[j+2] = pad;
+            out[j+1] = table[word & mask];
+            word >>= encode_width;
+            out[j]   = table[word];
+
+            break;
     }
 }
 
-void base64_decode(size_t len, const char *encode, char *uncode) {
+void base64_decode(size_t len, const char *encode, char *decode) {
+    const char pad = '=';
     const size_t bias = '+';
-    const static char table[256] = {
+    const size_t max = 'z';
+#ifdef DEBUG
+    const char bad_value = 64;
+#endif
+    const static char table['z' - '+' + 1] = {
+        62, 64, 64, 64, 63,
+        52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
+        64, 64, 64,
+         0,
+        64, 64, 64,
+         0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 17,
+            18, 19, 20, 21, 22, 23, 24, 25,
+        64, 64, 64, 64, 64, 64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 
+            38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
     };
 
     const uint32_t mask = 0xff;
+#ifdef DEBUG
+    char buf[5];
+#endif
+    size_t i = 0, j = 0;
+    for (; i < len-encode_step; i += encode_step, j += decode_step) {
+        uint32_t word;
+#if DEBUG
+        for (size_t k = 0; k < 4; ++k) {
+            if (encode[i+k] < bias || max < encode[i+k] || table[encode[i+k]-bias] == bad_value)
+                goto encode_error;
+        }
+#endif
+        word  = table[encode[i]  -bias] << 3*encode_width;
+        word |= table[encode[i+1]-bias] << 2*encode_width;
+        word |= table[encode[i+2]-bias] <<   encode_width;
+        word |= table[encode[i+3]-bias];
+
+        decode[j + 2] = word & mask;
+        word >>= decode_width;
+        decode[j + 1] = word & mask;
+        word >>= decode_width;
+        decode[j]     = word & mask;
+
+#ifdef DEBUG
+        continue;
+encode_error:
+        snprintf(buf, 5, encode + i);
+        fprintf(stderr,
+            "base64_decode: bad encode \"%s\" at index %d\n",
+            buf, i
+        );
+        for (size_t k = 0; k < 4; ++k)
+            fprintf(stderr,
+                "bias = %d, enc = %c %3d, enc-bias = %d, max = %d, val = %d\n",
+                bias, encode[i+k], encode[i+k], encode[i+k]-bias, max,
+                table[encode[i+k]-bias]
+            );
+#endif
+    }
+
     uint32_t word;
+    word  = table[encode[i]  -bias] << 3*encode_width;
+    word |= table[encode[i+1]-bias] << 2*encode_width;
+    word |= table[encode[i+2]-bias] <<   encode_width;
+    word |= table[encode[i+3]-bias];
 
-    for (size_t i = 0, j = 0; i < len;
-         i += encode_step, j += uncode_step)
-    {
-        word  = encode[i]   << 3*encode_width;
-        word |= encode[i+1] << 2*encode_width;
-        word |= encode[i+2] <<   encode_width;
-        word |= encode[i+3];
-
-        out[j + 2] = table[word & mask];
-        word >>= decode_width;
-        out[j + 1] = table[word & mask];
-        word >>= decode_width;
-        out[j] = table[word];
+    const int padding = (encode[len-1] == pad) + (encode[len-2] == pad);
+    switch (padding) {
+        case 2:
+            word >>= 2*decode_width;
+            decode[j]   = word & mask;
+            break;
+        case 1:
+            word >>= decode_width;
+            decode[j+1] = word & mask;
+            word >>= decode_width;
+            decode[j]   = word & mask;
+            break;
+        case 0:
+            decode[j+2] = word & mask;
+            word >>= decode_width;
+            decode[j+1] = word & mask;
+            word >>= decode_width;
+            decode[j]   = word & mask;
+            break;
+#ifdef DEBUG
+        default:
+            fprintf(stderr,
+                "base64_decode: bad encode: too much padding: %d\n",
+                padding
+            );
+#endif
     }
 }
 
-size_t encode_len(size_t uncode_len) {
-    return ((uncode_len-1)/3+1)*4
+size_t encode_len(size_t decode_len) {
+    return ((decode_len-1)/3+1)*4;
 }
-size_t uncode_len(size_t encode_len, const char *encode) {
+size_t decode_len(size_t encode_len, const char *encode) {
     const size_t padding =
         (encode[encode_len-1] == '=') + (encode[encode_len-2] == '=');
     
@@ -105,11 +190,19 @@ int main(int argc, char *argv[]) {
     }
 
     const size_t len = strlen(argv[1]);
-    const size_t out_len = encode_len(len) + 1;
+    const size_t out_len = encode_len(len);
     char *out = calloc(out_len, sizeof(char));
-    base64(strlen(argv[1]), argv[1], out);
-    out[out_len-1] = '\0';
+    base64_encode(strlen(argv[1]), argv[1], out);
+    out[out_len] = '\0';
     puts(out);
+    putchar('\n');
+
+    for (size_t i = 0; i < len; ++i) {
+        argv[1][i] = 'Z';
+    }
+    base64_decode(out_len, out, argv[1]);
+    argv[1][len] = '\0';
+    puts(argv[1]);
     putchar('\n');
 
     free(out);
