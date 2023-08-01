@@ -15,9 +15,9 @@
 (defun char-index-table ()
   (let ((small-table (make-hash-table)))
     (loop for i from 0 below (expt 2 6) 
-          do (setf (gethash (index-char i) small-table) i))
+          do (setf (gethash (char-code (index-char i)) small-table) i))
     (loop for i from 0 below (expt 2 8)
-          do (format T "'~a', "
-                     (if (gethash (code-char i) small-table)
-                       (code-char i) 
-                       "\\0")))))
+          do (format T "~a, "
+                     (if (char= (code-char i) #\=)
+                       0
+                       (gethash i small-table (expt 2 6)))))))
