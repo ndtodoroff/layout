@@ -63,7 +63,8 @@ int base64_encode(size_t len, const uint8_t *data, char *out) {
 #ifdef DEBUG
         default:
             fprintf(stderr,
-                "base64_encode: IMPOSSIBLE: bad remainder: %d\n",
+                "%s:%d:%s: IMPOSSIBLE: bad remainder: %d\n",
+                __FILE__, __LINE__, __func__,
                 rem
             );
             return 1;
@@ -107,7 +108,8 @@ int base64_decode(size_t len, const char *encode, uint8_t *decode) {
 #ifdef DEBUG
                 snprintf(buf, 5, encode + i);
                 fprintf(stderr,
-                    "base64_decode: bad encode \"%s\" at index %d\n",
+                    "%s:%d:%s: bad encode \"%s\" at index %d\n",
+                    __FILE__, __LINE__, __func__,
                     buf, i
                 );
                 for (size_t k = 0; k < 4; ++k)
@@ -162,7 +164,8 @@ int base64_decode(size_t len, const char *encode, uint8_t *decode) {
 #ifdef DEBUG
         default:
             fprintf(stderr,
-                "base64_decode: IMPOSSIBLE: too much padding: %d\n",
+                "%s:%d:%s: IMPOSSIBLE: too much padding: %d\n",
+                __FILE__, __LINE__, __func__,
                 padding
             );
             return 2;
