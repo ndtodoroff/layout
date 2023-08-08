@@ -1,3 +1,12 @@
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef DEBUG
+    #include <stdio.h>
+#endif
+
+#include "base64.h"
+
 const unsigned int decode_width = 8, encode_width = 6;
 const size_t decode_step = 3, encode_step = 4;
 
@@ -29,7 +38,6 @@ int base64_encode(size_t len, const uint8_t *data, char *out) {
         word >>= encode_width;
         out[j]   = table[word];
     }
-    printf("i = %d, j = %d\n", i, j);
 
     const size_t rem = len - i;
 
